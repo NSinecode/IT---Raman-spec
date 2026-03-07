@@ -1,69 +1,77 @@
 import pandas as pd
-
+import joblib
 from sklearn.metrics import classification_report, confusion_matrix, accuracy_score
-
-from model.training import train_or_load_model
+from model.training import train_or_load_rf_model # Исправил название функции согласно вашему файлу
 from preprocessing.datagather import get_train_df, get_new_df
-from sklearn.preprocessing import StandardScaler
 
 if __name__ == '__main__':
-    TRAINING_PATH = input('Введите папку в которой находится обучающая выборка: ')
-    NEW_PATH = input('Введите папку в которой находится тестовая выборка: ')
+    TRAINING_PATH = input('Введите папку с обучающей выборкой: ')
+    NEW_PATH = input('Введите папку с новыми данными: ')
 
-    # 1. Обучаем модель
+    # 1. Обучаем модель (или загружаем)
     df_train = get_train_df(TRAINING_PATH)
-    print(df_train.head())
+    model, class_names = train_or_load_rf_model(df_train)
+    
+    # ВАЖНО: Для корректного препроцессинга нам нужны колонки из обучения
+    # Получаем структуру X_train (без 'class', 'x', 'y')
+    X_train_template = pd.get_dummies(df_train.drop(columns=["class", "x", "y"], errors='ignore'))
+    train_columns = X_train_template.columns
 
-    model, class_names = train_or_load_model(df_train)
-
-    # 2. Загружаем новые данные (без class)
+    # 2. Загружаем новые данные
     df_new = get_new_df(NEW_PATH)
 
-    intensity_cols = [col for col in df_new.columns if col.startswith('intensity')]
-    categorical_cols = ['brain_region', 'wave_category']
-
-    # 1. Признаки и целевая переменная
-    X = df_new.drop(columns=["x", "y"], errors='ignore')
+    # 3. ПРЕПРОЦЕССИНГ (идентичный тренировочному)
+    # Убираем лишнее
+    X_new = df_new.drop(columns=["x", "y"], errors='ignore')
     
-    # One-Hot Encoding для категориальных признаков
-    cat_cols = [col for col in X.columns if col in ["brain_region", "wave_category"]]
-    X = pd.get_dummies(X, columns=cat_cols)
+    # One-Hot Encoding
+    cat_cols = [col for col in X_new.columns if col in ["brain_region", "wave_category"]]
+    X_new = pd.get_dummies(X_new, columns=cat_cols)
     
-    # Заполняем NaN средним
-    X = X.fillna(X.mean())
+    # --- СИНХРОНИЗАЦИЯ КОЛОНОК ---
+    # Добавляем недостающие колонки (которых нет в new, но были в train) заполняя нулями
+    for col in train_columns:
+        if col not in X_new.columns:
+            X_new[col] = 0
+            
+    # Убираем лишние колонки (если в new появились новые категории, которых не было в train)
+    # И выстраиваем колонки в том же порядке, что и в train
+    X_new = X_new[train_columns]
+    
+    # Заполняем NaN средним (лучше использовать средние из train, но для простоты оставим так)
+    X_new = X_new.fillna(X_new.mean())
 
+    # 4. СТАНДАРТИЗАЦИЯ
+    # В идеале Scaler нужно сохранять в pkl вместе с моделью. 
+    # Если в training.py он не сохраняется отдельно, создаем новый и обучаем на TRAIN
+    from sklearn.preprocessing import StandardScaler
     scaler = StandardScaler()
-    X_new = scaler.fit_transform(X)
+    # Обучаем на тренировочных (нужно повторить логику из training.py)
+    X_train_data = pd.get_dummies(df_train.drop(columns=["class", "x", "y"], errors='ignore'))
+    scaler.fit(X_train_data) 
+    
+    X_new_scaled = scaler.transform(X_new)
 
-    # 3. Предсказания
-    predictions_idx = model.predict(X_new)
-    predictions_labels = [class_names[i] for i in predictions_idx]
+    # 5. ПРЕДСКАЗАНИЯ
+    predictions_idx = model.predict(X_new_scaled)
+    # Если в class_names индексы строк, используем их напрямую
+    predictions_labels = predictions_idx 
 
-    probabilities = model.predict_proba(X_new)
+    probabilities = model.predict_proba(X_new_scaled)
 
-    # 4. Таблица результатов
+    # 6. РЕЗУЛЬТАТЫ
     results = pd.DataFrame({
-        'Brain_Region': df_new['brain_region'],
+        'Brain_Region': df_new['brain_region'] if 'brain_region' in df_new.columns else "N/A",
         'Predicted_Class': predictions_labels,
         'Confidence': [max(p) for p in probabilities]
     })
 
     print("\nPredictions:")
-    print(results)
+    print(results.head(20))
 
-    # 5. Если в новых данных есть class — считаем метрики
+    # 7. Метрики (если 'class' случайно есть в new)
     if 'class' in df_new.columns:
-
+        print("\n--- Metrics found in new data ---")
         y_true = df_new['class']
-        y_pred = predictions_labels
-
-        print("\nAccuracy:")
-        print(accuracy_score(y_true, y_pred))
-
-        print("\nClassification Report:")
-        report = classification_report(y_true, y_pred)
-        print(report)
-
-        print("\nConfusion Matrix:")
-        cm = confusion_matrix(y_true, y_pred)
-        print(cm)
+        print(f"Accuracy: {accuracy_score(y_true, predictions_labels):.4f}")
+        print(classification_report(y_true, predictions_labels))
