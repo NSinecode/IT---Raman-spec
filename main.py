@@ -4,6 +4,7 @@ from sklearn.metrics import classification_report, confusion_matrix, accuracy_sc
 
 from model.training import train_or_load_model
 from preprocessing.datagather import get_train_df, get_new_df
+from sklearn.preprocessing import StandardScaler
 
 if __name__ == '__main__':
     TRAINING_PATH = input('Введите папку в которой находится обучающая выборка: ')
@@ -19,9 +20,20 @@ if __name__ == '__main__':
     df_new = get_new_df(NEW_PATH)
 
     intensity_cols = [col for col in df_new.columns if col.startswith('intensity')]
-    categorical_cols = ['brain_region']
+    categorical_cols = ['brain_region', 'wave_category']
 
-    X_new = df_new[intensity_cols + categorical_cols]
+    # 1. Признаки и целевая переменная
+    X = df_new.drop(columns=["x", "y"], errors='ignore')
+    
+    # One-Hot Encoding для категориальных признаков
+    cat_cols = [col for col in X.columns if col in ["brain_region", "wave_category"]]
+    X = pd.get_dummies(X, columns=cat_cols)
+    
+    # Заполняем NaN средним
+    X = X.fillna(X.mean())
+
+    scaler = StandardScaler()
+    X_new = scaler.fit_transform(X)
 
     # 3. Предсказания
     predictions_idx = model.predict(X_new)
