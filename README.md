@@ -13,3 +13,6 @@
 ```
 python3 main.py
 ```
+
+# Презентация
+https://docs.google.com/presentation/d/1DKuT-bMTHK1ubp4LuZA0b7M-kg5pGH93_P26ZWrViyA/edit?usp=sharing
